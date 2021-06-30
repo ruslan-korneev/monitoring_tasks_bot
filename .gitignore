@@ -2,3 +2,5 @@ venv
 .env
 __pycache__
 *.log
+postgres_data
+*.flag
