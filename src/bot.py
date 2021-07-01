@@ -1,30 +1,234 @@
+import asyncio
 import logging
 import os
 
 from aiogram import Bot, Dispatcher, executor, types
+from aiogram.contrib.fsm_storage.memory import MemoryStorage
+from aiogram.dispatcher import FSMContext
+from aiogram.dispatcher.filters import Text
+from aiogram.dispatcher.filters.state import State, StatesGroup
+from aiogram.types import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+)
+
+from common import create_tables
+from common import db
+
+from emoji import emojize
 
 
 TG_TOKEN = os.environ.get('TG_TOKEN')
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    filename='bot.log',
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%d-%b-%y %H:%M:%S')
 
 # Initialize bot and dispatcher
 bot = Bot(token=TG_TOKEN)
-dp = Dispatcher(bot)
+dp = Dispatcher(bot, storage=MemoryStorage())
+
+# Creation table for tasks
+create_tables.create_tables()
+
+
+class Form(StatesGroup):
+    """ Fields for tasks """
+    task_name = State()
+    task = State()
+    sleep = State()
+
+
+@dp.callback_query_handler(lambda call: True, state='*')
+async def process_callback_keyboard(call: types.CallbackQuery,
+                                    callback_data=None,
+                                    state='*'):
+    if callback_data:
+        code = callback_data
+    else:
+        code = call.data
+    if code == 'cancel':
+        await cancel_handler(
+            message=call.message,
+            from_user=call.from_user,
+            state=state)
+        await call.answer()
 
 
 @dp.message_handler(commands=['start'])
 async def send_welcome(message: types.Message):
     """
     This handler will be called when user sends `/start` command
+    Send info about bot and send keyboard with buttons
     """
-    await message.reply("Hi!")
+    keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
+    button_add_task = KeyboardButton(
+        emojize('Добавить задачу :round_pushpin:'))
+    button_task_list = KeyboardButton(emojize('Список задач :clipboard:'))
+    keyboard.row(button_add_task, button_task_list)
+
+    await message.reply("Hi! [ INFO ABOUT BOT ]", reply_markup=keyboard)
 
 
 @dp.message_handler()
 async def echo(message: types.Message):
-    await message.answer(message.text)
+    if 'Добавить задачу' in message.text:
+        keyboard = InlineKeyboardMarkup(resize_keyboard=True)
+        button_stop = InlineKeyboardButton(
+            text=emojize('Отмена :no_entry:'),
+            callback_data='cancel')
+        keyboard.row(button_stop)
+        await message.reply(
+            emojize(':plus: Пришлите тип задачи :spiral_notepad:'),
+            reply_markup=keyboard)
+        await Form.task_name.set()
+    elif 'Список задач' in message.text:
+        tasks = db.get_task_list()
+        reply = ""
+        for task in tasks:
+            reply += f'ID: {task[0]}\n' + task[1] + '\n' + task[2] + '\n'
+            if 'в очереди' in task[3]:
+                reply += task[3] + emojize(' :zzz:\n')
+            elif 'выполняется' in task[3]:
+                reply += task[3] + emojize(' :pencil:\n')
+            elif 'готов' in task[3]:
+                reply += task[3] + emojize(' :party_popper:\n')
+                reply += 'Ответ: ' + task[4] + '\n'
+            else:
+                reply += task[3] + emojize(' :exclamation_question_mark:\n')
+            reply += '____________\n'
+        await message.reply(
+            emojize('Вот список задач :clipboard: :\n' + reply))
+    else:
+        await message.answer(emojize('Не понял :thinking_face:'))
+
+
+@dp.message_handler(state=Form.task_name)
+async def process_add_task_name(message: types.Message, state: FSMContext):
+    """
+    Process adding task name
+    """
+    async with state.proxy() as task_data:
+        task_data['name'] = message.text
+    keyboard = InlineKeyboardMarkup(resize_keyboard=True)
+    button_stop = InlineKeyboardButton(
+        emojize('Отмена :no_entry:'), callback_data='cancel')
+    keyboard.row(button_stop)
+    await message.answer(
+        emojize('Пришлите входные данные задачи :envelope_with_arrow:'),
+        reply_markup=keyboard)
+    await Form.task.set()
+
+
+@dp.message_handler(state=Form.task)
+async def process_url(message: types.Message, state: FSMContext):
+    """
+    Process adding task
+    """
+    async with state.proxy() as task_data:
+        task_data['task'] = message.text
+    keyboard = InlineKeyboardMarkup(resize_keyboard=True)
+    button_stop = InlineKeyboardButton(
+        emojize('Отмена :no_entry:'),
+        callback_data='cancel')
+    keyboard.row(button_stop)
+    await message.answer(
+        emojize(':timer_clock: Пришлите задержку (в секундах)'),
+        reply_markup=keyboard)
+    await Form.sleep.set()
+
+
+@dp.message_handler(state=Form.sleep)
+async def process_add_time_out(message: types.Message, state: FSMContext):
+    """
+    Process adding timeout
+    """
+    try:
+        message.text = int(message.text)
+        msg = await message.answer(
+            emojize('Отлично, Задача выполняется! :zzz:'))
+        async with state.proxy() as task_data:
+            task_data['sleep'] = message.text
+            id_task = db.add_task(task_data['name'], task_data['task'])
+            await do_task(id_task, task_data['sleep'],
+                          message.from_user.id, msg.message_id)
+        await state.finish()
+    except ValueError:
+        await message.answer('Ошибка!\nПришлите число')
+
+
+@dp.message_handler(state='*', commands='cancel')
+@dp.message_handler(Text(equals='cancel', ignore_case=True), state='*')
+async def cancel_handler(message: types.Message,
+                         state: FSMContext, from_user=None):
+    """
+    Отмена формы
+    """
+    logging.info('Get user id - {}'.format(from_user.id))
+    if from_user:
+        message.from_user.id = from_user.id
+    current_state = await state.get_state()
+    if current_state is None:
+        logging.info('CURRENT STATE IS NONE')
+
+    logging.debug('Cancelling state %r', current_state)
+    # Cancel state and inform user about it
+    await state.finish()
+    logging.info('FINISHED')
+    await bot.edit_message_text(
+        message_id=message.message_id,
+        chat_id=from_user.id,
+        text='Отменено.')
+
+
+async def do_task(id_task, sleep, chat_id, message_id):
+    await asyncio.sleep(1)
+    db.task_in_process(id_task)
+    # Пишем, что задача выполняется и засыпаем
+    reply = f'Задача №{id_task} выполняется :hourglass_not_done:'
+    await bot.edit_message_text(
+        chat_id=chat_id,
+        message_id=message_id,
+        text=emojize(reply))
+    await asyncio.sleep(sleep-1)
+    # Выполняем задачу
+    answer = get_answer(id_task)
+    if not(answer is None):
+        db.task_done(id_task, answer)
+        reply = f'Задача {id_task} - Выполнена! :sparkles:\nОтвет: {answer}'
+        await bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=emojize(reply))
+    else:
+        db.task_fool(id_task)
+        reply = f'Провал, не понятны условия задачи №{id_task}'
+        reply += ' :exclamation_question_mark:'
+        await bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=emojize(reply))
+
+
+def get_answer(id_task):
+    if 'разворот' in db.get_name_task(id_task):
+        task = db.get_task(id_task)
+        answer = task[::-1]
+        return answer
+    elif 'четных' in db.get_name_task(id_task):
+        task = db.get_task(id_task)
+        answer = ''
+        for odd, even in zip(task[::2], task[1::2]):
+            answer += even + odd
+        if len(task) % 2 != 0:
+            answer += task[-1]
+        return answer
+    return None
 
 
 if __name__ == '__main__':
