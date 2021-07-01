@@ -72,7 +72,20 @@ async def send_welcome(message: types.Message):
     button_task_list = KeyboardButton(emojize('Список задач :clipboard:'))
     keyboard.row(button_add_task, button_task_list)
 
-    await message.reply("Hi! [ INFO ABOUT BOT ]", reply_markup=keyboard)
+    reply = """
+    Привет!
+    Бот для прохождения тестового задания
+    Выполняет только два типа задач:
+    - Выполнить разворот строки
+    - Выполнить попарно перестановку четных и нечетных
+    ____________________
+    После нажатия на кнопку "Добавить задачу" идет три этапа:
+        1. Название задачи (пример. Выполнить разворот строки)
+        2. Передать данные для выполнения задачи (тевирп)
+        3. Указать задержку в секундах
+        4. Получить ответ (привет)
+    """
+    await message.reply(reply, reply_markup=keyboard)
 
 
 @dp.message_handler()
