@@ -14,21 +14,47 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
 )
 
+from common import create_tables
+
 
 TG_TOKEN = os.environ.get('TG_TOKEN')
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    filename='bot.log',
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%d-%b-%y %H:%M:%S')
 
 # Initialize bot and dispatcher
 bot = Bot(token=TG_TOKEN)
-dp = Dispatcher(bot)
+dp = Dispatcher(bot, storage=MemoryStorage())
+
+# Creation table for tasks
+create_tables.create_tables()
 
 
 class Form(StatesGroup):
+    """ Fields for tasks """
     task_name = State()
     task = State()
-    sleep = State()
+    # sleep = State()
+
+
+@dp.callback_query_handler(lambda call: True, state='*')
+async def process_callback_keyboard(call: types.CallbackQuery,
+                                    callback_data=None,
+                                    state='*'):
+    if callback_data:
+        code = callback_data
+    else:
+        code = call.data
+    if code == 'cancel':
+        await cancel_handler(
+            message=call.message,
+            from_user=call.from_user,
+            state=state)
+        await call.answer()
 
 
 @dp.message_handler(commands=['start'])
@@ -64,7 +90,7 @@ async def echo(message: types.Message):
 
 
 @dp.message_handler(state=Form.task_name)
-async def process_url(message: types.Message, state: FSMContext):
+async def process_add_task_name(message: types.Message, state: FSMContext):
     """
     Process adding task name
     """
