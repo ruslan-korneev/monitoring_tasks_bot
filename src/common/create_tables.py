@@ -2,7 +2,6 @@ import logging
 import os
 
 import psycopg2
-from psycopg2.errors import UndefinedColumn
 
 
 logging.basicConfig(
@@ -33,9 +32,11 @@ def create_tables():
     create table
     if not exists
     tasks (
+    id int primary key,
     task_name varchar(255) not null,
     task varchar(255) not null,
-    status varchar(32) not null
+    status varchar(32) not null,
+    answer varchar(255)
     );
     """
     cursor.execute(query, connection)
