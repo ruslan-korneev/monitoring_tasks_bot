@@ -230,11 +230,15 @@ async def do_task(id_task, sleep, chat_id, message_id):
 
 
 def get_answer(id_task):
-    if 'разворот' in db.get_name_task(id_task):
+    name = db.get_name_task(id_task).lower()
+    flag_swap = 'разворот' in name or 'поворот' in name or 'развернуть' in name
+    flag_swap = flag_swap or 'повернуть' in name or 'круть' in name or 'верть' in name
+    flag_odd_even = 'четных' in name or 'четные' in name or 'чет' in name
+    if flag_swap:
         task = db.get_task(id_task)
         answer = task[::-1]
         return answer
-    elif 'четных' in db.get_name_task(id_task):
+    elif flag_odd_even:
         task = db.get_task(id_task)
         answer = ''
         for odd, even in zip(task[::2], task[1::2]):
