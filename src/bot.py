@@ -19,6 +19,8 @@ from common import db
 
 from emoji import emojize
 
+from telegram_bot_pagination import InlineKeyboardPaginator
+
 
 TG_TOKEN = os.environ.get('TG_TOKEN')
 
@@ -42,6 +44,15 @@ class Form(StatesGroup):
     task_name = State()
     task = State()
     sleep = State()
+
+
+@dp.callback_query_handler(lambda c: c.data.split('#')[0] == 'task')
+async def task_page_callback(call):
+    page = int(call.data.split('#')[1])
+    await bot.delete_message(
+        call.message.chat.id,
+        call.message.message_id)
+    await send_task_page(call.message, page)
 
 
 @dp.callback_query_handler(lambda call: True, state='*')
@@ -102,22 +113,7 @@ async def echo(message: types.Message):
             reply_markup=keyboard)
         await Form.task_name.set()
     elif 'Список задач' in message.text:
-        tasks = db.get_task_list()
-        reply = ""
-        for task in tasks:
-            reply += f'ID: {task[0]}\n' + task[1] + '\n' + task[2] + '\n'
-            if 'в очереди' in task[3]:
-                reply += task[3] + emojize(' :zzz:\n')
-            elif 'выполняется' in task[3]:
-                reply += task[3] + emojize(' :pencil:\n')
-            elif 'готов' in task[3]:
-                reply += task[3] + emojize(' :party_popper:\n')
-                reply += 'Ответ: ' + task[4] + '\n'
-            else:
-                reply += task[3] + emojize(' :exclamation_question_mark:\n')
-            reply += '____________\n'
-        await message.reply(
-            emojize('Вот список задач :clipboard: :\n' + reply))
+        await send_task_page(message)
     else:
         await message.answer(emojize('Не понял :thinking_face:'))
 
@@ -231,8 +227,9 @@ async def do_task(id_task, sleep, chat_id, message_id):
 
 def get_answer(id_task):
     name = db.get_name_task(id_task).lower()
-    flag_swap = 'разворот' in name or 'поворот' in name or 'развернуть' in name
-    flag_swap = flag_swap or 'повернуть' in name or 'круть' in name or 'верть' in name
+    flag_swap = ('разворот' in name or 'поворот' in name or
+                 'развернуть' in name or 'повернуть' in name or
+                 'круть' in name or 'верть' in name)
     flag_odd_even = 'четных' in name or 'четные' in name or 'чет' in name
     if flag_swap:
         task = db.get_task(id_task)
@@ -247,6 +244,37 @@ def get_answer(id_task):
             answer += task[-1]
         return answer
     return None
+
+
+async def send_task_page(message, page=1):
+    task_pages = db.get_task_list()
+    paginator = InlineKeyboardPaginator(
+        len(task_pages),
+        current_page=page,
+        data_pattern='task#{page}',
+    )
+
+    reply = f'ID: {task_pages[page-1][0]}\n'
+    reply += f'Задача: {task_pages[page-1][1]}\n'
+    reply += f'Дано: {task_pages[page-1][2]}\n'
+    if 'в очереди' in task_pages[page-1][3]:
+        status = f'Статус: {task_pages[page-1][3]} :zzz:'
+        reply += emojize(status)
+    elif 'выполняется' in task_pages[page-1][3]:
+        status = f'Статус: {task_pages[page-1][3]} :pencil:'
+        reply += emojize(status)
+    elif 'готов' in task_pages[page-1][3]:
+        status = f'Статус: {task_pages[page-1][3]} :party_popper:\n'
+        reply += emojize(status)
+        reply += f'Ответ: {task_pages[page-1][4]}'
+    else:
+        status = f'Статус: {task_pages[page-1][3]} :exclamation_question_mark:'
+
+    await bot.send_message(
+        message.chat.id,
+        reply,
+        reply_markup=paginator.markup,
+    )
 
 
 if __name__ == '__main__':
